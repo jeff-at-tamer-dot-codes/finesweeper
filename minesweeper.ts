@@ -59,6 +59,24 @@ function placeMines(safeRow: number, safeCol: number): void {
   safeCellsRemaining = ROWS * COLS - MINES;
 }
 
+function revealCell(row: number, col: number): void {
+  const cell = board[row][col];
+  if (cell.revealed) return;
+  cell.revealed = true;
+  if (!cell.mine) safeCellsRemaining--;
+  if (cell.neighborCount === 0 && !cell.mine) {
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const nr = row + dr;
+        const nc = col + dc;
+        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
+          revealCell(nr, nc);
+        }
+      }
+    }
+  }
+}
+
 function reveal(row: number, col: number): void {
   if (gameOver) return;
   const cell = board[row][col];
@@ -69,8 +87,7 @@ function reveal(row: number, col: number): void {
     placeMines(row, col);
   }
 
-  cell.revealed = true;
-  safeCellsRemaining--;
+  revealCell(row, col);
 
   if (cell.mine) {
     gameOver = true;

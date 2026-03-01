@@ -17,7 +17,7 @@ open index.html
 
 ## Current State
 
-Basic playable Minesweeper: 16 rows, 30 columns, 99 mines. Click to reveal, first click is safe. No flagging — win by revealing all non-mine cells. No auto-reveal of zero-neighbor cells. No timer, no mine counter. No image assets (text only).
+Basic playable Minesweeper: 16 rows, 30 columns, 99 mines. Click to reveal, first click is safe. No flagging — win by revealing all non-mine cells. No timer. No image assets (text only).
 
 ## No-Guess Board Generation (Planned)
 
