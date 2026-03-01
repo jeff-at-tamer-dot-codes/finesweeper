@@ -35,7 +35,7 @@ function placeMines(safeRow: number, safeCol: number): void {
   while (placed < MINES) {
     const r = Math.floor(Math.random() * ROWS);
     const c = Math.floor(Math.random() * COLS);
-    if (r === safeRow && c === safeCol) continue;
+    if (Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1) continue;
     if (board[r][c].mine) continue;
     board[r][c].mine = true;
     placed++;
@@ -61,10 +61,10 @@ function placeMines(safeRow: number, safeCol: number): void {
 
 function revealCell(row: number, col: number): void {
   const cell = board[row][col];
-  if (cell.revealed) return;
+  if (cell.revealed || cell.mine) return;
   cell.revealed = true;
-  if (!cell.mine) safeCellsRemaining--;
-  if (cell.neighborCount === 0 && !cell.mine) {
+  safeCellsRemaining--;
+  if (cell.neighborCount === 0) {
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
         const nr = row + dr;
@@ -93,11 +93,6 @@ function reveal(row: number, col: number): void {
     gameOver = true;
     clickedMineRow = row;
     clickedMineCol = col;
-    for (let r = 0; r < ROWS; r++) {
-      for (let c = 0; c < COLS; c++) {
-        if (board[r][c].mine) board[r][c].revealed = true;
-      }
-    }
     render();
     document.getElementById("message")!.textContent = "Game over! You hit a mine.";
     return;
@@ -118,6 +113,19 @@ function checkWin(): boolean {
   return true;
 }
 
+function adjacentToRevealed(row: number, col: number): boolean {
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      const nr = row + dr;
+      const nc = col + dc;
+      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc].revealed) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function updateCounter(): void {
   const counter = document.getElementById("counter")!;
   if (firstClick) {
@@ -134,21 +142,22 @@ function render(): void {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const cell = board[r][c];
+      const showMine = cell.mine && gameOver && adjacentToRevealed(r, c);
+      const isRevealed = cell.revealed || showMine;
+      const visible = firstClick || isRevealed || adjacentToRevealed(r, c);
       const div = document.createElement("div");
-      div.className = "cell" + (cell.revealed ? " revealed" : "");
+      div.className = "cell" + (isRevealed ? " revealed" : "") + (!visible ? " hidden" : "");
 
-      if (cell.revealed) {
-        if (cell.mine) {
-          div.textContent = "💣";
-          div.classList.add(r === clickedMineRow && c === clickedMineCol ? "mine-clicked" : "mine");
-        } else if (cell.neighborCount > 0) {
-          const circle = document.createElement("span");
-          circle.className = `circle circle-${cell.neighborCount}`;
-          div.appendChild(circle);
-        }
+      if (showMine) {
+        div.textContent = "💣";
+        div.classList.add(r === clickedMineRow && c === clickedMineCol ? "mine-clicked" : "mine");
+      } else if (cell.revealed && cell.neighborCount > 0) {
+        const circle = document.createElement("span");
+        circle.className = `circle circle-${cell.neighborCount}`;
+        div.appendChild(circle);
       }
 
-      if (!gameOver && !cell.revealed) {
+      if (!gameOver && !isRevealed && visible) {
         const row = r, col = c;
         div.addEventListener("click", () => reveal(row, col));
       }

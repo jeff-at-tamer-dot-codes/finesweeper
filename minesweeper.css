@@ -3,6 +3,7 @@ body {
   font-family: sans-serif;
   background: #2b3038;
   color: #d2d8df;
+  text-align: center;
 }
 #game {
   display: grid;
@@ -29,6 +30,9 @@ body {
   border: 1px solid #2b3038;
   background: #3a4047;
   cursor: default;
+}
+.cell.hidden {
+  visibility: hidden;
 }
 .cell.mine {
   background: #484e55;
