@@ -13,6 +13,7 @@ let gameOver = false;
 let firstClick = true;
 let clickedMineRow = -1;
 let clickedMineCol = -1;
+let safeCellsRemaining = 0;
 
 function createBoard(): void {
   gameOver = false;
@@ -55,6 +56,7 @@ function placeMines(safeRow: number, safeCol: number): void {
       board[r][c].neighborCount = count;
     }
   }
+  safeCellsRemaining = ROWS * COLS - MINES;
 }
 
 function reveal(row: number, col: number): void {
@@ -68,6 +70,7 @@ function reveal(row: number, col: number): void {
   }
 
   cell.revealed = true;
+  safeCellsRemaining--;
 
   if (cell.mine) {
     gameOver = true;
@@ -93,18 +96,24 @@ function reveal(row: number, col: number): void {
 }
 
 function checkWin(): boolean {
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (!board[r][c].mine && !board[r][c].revealed) return false;
-    }
-  }
+  if (safeCellsRemaining > 0) return false;
   gameOver = true;
   return true;
+}
+
+function updateCounter(): void {
+  const counter = document.getElementById("counter")!;
+  if (firstClick) {
+    counter.textContent = "";
+  } else {
+    counter.textContent = String(safeCellsRemaining);
+  }
 }
 
 function render(): void {
   const container = document.getElementById("game")!;
   container.innerHTML = "";
+
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       const cell = board[r][c];
@@ -130,6 +139,7 @@ function render(): void {
       container.appendChild(div);
     }
   }
+  updateCounter();
 }
 
 function newGame(): void {

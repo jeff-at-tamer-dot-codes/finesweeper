@@ -60,6 +60,15 @@ button {
   cursor: pointer;
   font-size: 14px;
 }
+#board-wrapper {
+  display: inline-block;
+}
+#counter {
+  display: block;
+  text-align: right;
+  font-size: 14px;
+  min-height: 1.2em;
+}
 #message {
   font-size: 18px;
   font-weight: bold;
