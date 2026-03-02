@@ -76,10 +76,77 @@ function fixEdgeFiftyFifties(): void {
     }
   }
 
+  function fixRowDiag(thirdRow: number, outerRow: number, innerRow: number): void {
+    for (let c = 0; c <= COLS - 4; c++) {
+      if (!board[thirdRow][c].mine || !board[thirdRow][c + 3].mine) continue;
+      const group: [number, number][] = [
+        [outerRow, c + 1], [outerRow, c + 2],
+        [innerRow, c + 1], [innerRow, c + 2]
+      ];
+      const mines = group.filter(([r, cc]) => board[r][cc].mine);
+      if (mines.length !== 2) continue;
+      if (mines[0][0] === mines[1][0] || mines[0][1] === mines[1][1]) continue;
+      board[thirdRow][c].mine = false;
+      board[thirdRow][c + 3].mine = false;
+      for (const [r, cc] of group) board[r][cc].mine = true;
+    }
+
+    if (board[thirdRow][2].mine) {
+      const group: [number, number][] = [
+        [outerRow, 0], [outerRow, 1],
+        [innerRow, 0], [innerRow, 1]
+      ];
+      const mines = group.filter(([r, c]) => board[r][c].mine);
+      if (mines.length === 2 && mines[0][0] !== mines[1][0] && mines[0][1] !== mines[1][1]) {
+        board[outerRow][0].mine = true;
+        board[outerRow][1].mine = true;
+        board[innerRow][0].mine = true;
+        board[innerRow][1].mine = false;
+        board[thirdRow][2].mine = false;
+      }
+    }
+
+    if (board[thirdRow][COLS - 3].mine) {
+      const group: [number, number][] = [
+        [outerRow, COLS - 2], [outerRow, COLS - 1],
+        [innerRow, COLS - 2], [innerRow, COLS - 1]
+      ];
+      const mines = group.filter(([r, c]) => board[r][c].mine);
+      if (mines.length === 2 && mines[0][0] !== mines[1][0] && mines[0][1] !== mines[1][1]) {
+        board[outerRow][COLS - 1].mine = true;
+        board[outerRow][COLS - 2].mine = true;
+        board[innerRow][COLS - 1].mine = true;
+        board[innerRow][COLS - 2].mine = false;
+        board[thirdRow][COLS - 3].mine = false;
+      }
+    }
+  }
+
+  function fixColDiag(thirdCol: number, outerCol: number, innerCol: number): void {
+    for (let r = 0; r <= ROWS - 4; r++) {
+      if (!board[r][thirdCol].mine || !board[r + 3][thirdCol].mine) continue;
+      const group: [number, number][] = [
+        [r + 1, outerCol], [r + 1, innerCol],
+        [r + 2, outerCol], [r + 2, innerCol]
+      ];
+      const mines = group.filter(([rr, c]) => board[rr][c].mine);
+      if (mines.length !== 2) continue;
+      if (mines[0][0] === mines[1][0] || mines[0][1] === mines[1][1]) continue;
+      board[r][thirdCol].mine = false;
+      board[r + 3][thirdCol].mine = false;
+      for (const [rr, c] of group) board[rr][c].mine = true;
+    }
+  }
+
   fixRow(2, 0, 1);
   fixRow(ROWS - 3, ROWS - 2, ROWS - 1);
   fixCol(2, 0, 1);
   fixCol(COLS - 3, COLS - 2, COLS - 1);
+
+  fixRowDiag(2, 0, 1);
+  fixRowDiag(ROWS - 3, ROWS - 1, ROWS - 2);
+  fixColDiag(2, 0, 1);
+  fixColDiag(COLS - 3, COLS - 1, COLS - 2);
 }
 
 function placeMines(safeRow: number, safeCol: number): void {
