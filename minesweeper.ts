@@ -14,6 +14,7 @@ let firstClick = true;
 let clickedMineRow = -1;
 let clickedMineCol = -1;
 let safeCellsRemaining = 0;
+let prevVisible: boolean[][] = [];
 
 function createBoard(): void {
   gameOver = false;
@@ -21,12 +22,14 @@ function createBoard(): void {
   clickedMineRow = -1;
   clickedMineCol = -1;
   board = [];
+  prevVisible = [];
   for (let r = 0; r < ROWS; r++) {
     const row: Cell[] = [];
     for (let c = 0; c < COLS; c++) {
       row.push({ mine: false, revealed: false, neighborCount: 0 });
     }
     board.push(row);
+    prevVisible.push(new Array(COLS).fill(true));
   }
 }
 
@@ -155,8 +158,15 @@ function render(): void {
       const showMine = cell.mine && gameOver && adjacentToRevealed(r, c);
       const isRevealed = cell.revealed || showMine;
       const visible = firstClick || isRevealed || adjacentToRevealed(r, c);
+      const wasVisible = prevVisible[r][c];
       const div = document.createElement("div");
-      div.className = "cell" + (isRevealed ? " revealed" : "") + (!visible ? " hidden" : "");
+      div.className = "cell" + (isRevealed ? " revealed" : "");
+      if (!visible) {
+        div.classList.add(wasVisible ? "pop-out" : "hidden");
+      } else if (!wasVisible) {
+        div.classList.add("pop-in");
+      }
+      prevVisible[r][c] = visible;
 
       if (showMine) {
         div.textContent = "💣";

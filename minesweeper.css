@@ -1,3 +1,26 @@
+:root {
+  --reveal-duration: 300ms;
+}
+
+@keyframes pop-in {
+  from { transform: scale(0); }
+  to { transform: scale(1); }
+}
+
+.cell.pop-in {
+  animation: pop-in var(--reveal-duration) ease-out;
+}
+
+@keyframes pop-out {
+  from { transform: scale(1); }
+  to { transform: scale(0); }
+}
+
+.cell.pop-out {
+  animation: pop-out var(--reveal-duration) ease-in forwards;
+  pointer-events: none;
+}
+
 body {
   margin: 20px;
   font-family: sans-serif;
