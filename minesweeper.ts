@@ -33,6 +33,55 @@ function createBoard(): void {
   }
 }
 
+function fixEdgeFiftyFifties(): void {
+  function fixRow(thirdRow: number, edgeRow1: number, edgeRow2: number): void {
+    for (let c = 0; c < COLS; c++) {
+      if (!board[thirdRow][c].mine) continue;
+      const isLeft = c === 0;
+      const isRight = c === COLS - 1;
+      if (isLeft) {
+        if (!board[thirdRow][1].mine) continue;
+      } else if (isRight) {
+        if (!board[thirdRow][COLS - 2].mine) continue;
+      } else {
+        if (!board[thirdRow][c - 1].mine || !board[thirdRow][c + 1].mine) continue;
+      }
+      const e1 = board[edgeRow1][c].mine;
+      const e2 = board[edgeRow2][c].mine;
+      if (e1 === e2) continue;
+      const targetRow = e1 ? edgeRow2 : edgeRow1;
+      board[thirdRow][c].mine = false;
+      board[targetRow][c].mine = true;
+    }
+  }
+
+  function fixCol(thirdCol: number, edgeCol1: number, edgeCol2: number): void {
+    for (let r = 0; r < ROWS; r++) {
+      if (!board[r][thirdCol].mine) continue;
+      const isTop = r === 0;
+      const isBottom = r === ROWS - 1;
+      if (isTop) {
+        if (!board[1][thirdCol].mine) continue;
+      } else if (isBottom) {
+        if (!board[ROWS - 2][thirdCol].mine) continue;
+      } else {
+        if (!board[r - 1][thirdCol].mine || !board[r + 1][thirdCol].mine) continue;
+      }
+      const e1 = board[r][edgeCol1].mine;
+      const e2 = board[r][edgeCol2].mine;
+      if (e1 === e2) continue;
+      const targetCol = e1 ? edgeCol2 : edgeCol1;
+      board[r][thirdCol].mine = false;
+      board[r][targetCol].mine = true;
+    }
+  }
+
+  fixRow(2, 0, 1);
+  fixRow(ROWS - 3, ROWS - 2, ROWS - 1);
+  fixCol(2, 0, 1);
+  fixCol(COLS - 3, COLS - 2, COLS - 1);
+}
+
 function placeMines(safeRow: number, safeCol: number): void {
   let placed = 0;
   while (placed < MINES) {
@@ -43,6 +92,7 @@ function placeMines(safeRow: number, safeCol: number): void {
     board[r][c].mine = true;
     placed++;
   }
+  fixEdgeFiftyFifties();
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (board[r][c].mine) continue;
@@ -169,7 +219,7 @@ function render(): void {
       prevVisible[r][c] = visible;
 
       if (showMine) {
-        div.textContent = "💣";
+        div.textContent = clickedMineRow === -1 ? "🌺" : "💣";
         div.classList.add(r === clickedMineRow && c === clickedMineCol ? "mine-clicked" : "mine");
       } else if (cell.revealed && cell.neighborCount > 0) {
         const circle = document.createElement("span");
