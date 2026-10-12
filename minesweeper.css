@@ -24,7 +24,7 @@
 body {
   margin: 20px;
   font-family: sans-serif;
-  background: #2b3038;
+  background: #1e262e;
   color: #d2d8df;
   text-align: center;
 }
@@ -51,7 +51,7 @@ body {
 }
 .cell.revealed {
   border: 1px solid #2b3038;
-  background: #3a4047;
+  background: #1e262e;
   cursor: default;
 }
 .cell.hidden {
@@ -68,14 +68,14 @@ body {
   height: 15.75px;
   border-radius: 50%;
 }
-.circle-1 { background: #8dc5fa; }
-.circle-2 { background: #7dc070; }
-.circle-3 { background: #ee7f8a; }
-.circle-4 { background: #e08df9; }
-.circle-5 { background: #d5ac43; }
-.circle-6 { background: #80cacb; }
-.circle-7 { background: #888888; }
-.circle-8 { background: #d2d8df; }
+.circle-1 { background: #66bbee; }
+.circle-2 { background: #66c266; }
+.circle-3 { background: #ff7788; }
+.circle-4 { background: #ee88ff; }
+.circle-5 { background: #ddcc00; }
+.circle-6 { background: #44bbbb; }
+.circle-7 { background: #999999; }
+.circle-8 { background: #d8e0e8; }
 #controls {
   margin: 10px 0;
 }
