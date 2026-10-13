@@ -1,6 +1,6 @@
 import type { Difficulty, GenerateRequest, GenerateResult, RescueRequest } from "./generator-worker.ts";
-import { analyzeLoss, findLayout } from "./loss-analysis.ts";
-import { type Board, boardFromMines } from "./solver.ts";
+import { analyzeLoss, classifyFrontier, findLayout } from "./loss-analysis.ts";
+import { type Board, boardFromMines, eightCell } from "./solver.ts";
 
 const ROWS = 20;
 const COLS = 30;
@@ -13,15 +13,18 @@ let generator: Worker | null = null;
 let clickedMine = -1;
 // Whether the clicked mine was certain given what the player could see.
 let clickedMineForced = false;
+// After a loss: frontier cells that were certainly safe, or certainly mines,
+// given what the player could see.
+let certainlySafe = new Set<number>();
+let certainMines = new Set<number>();
 let colorblindGame = false;
 let safeCellsRemaining = 0;
 let prevVisible: boolean[] = [];
 // colorOf[n] is the circle color shown for count n.
 let colorOf = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
-function difficulty(): Difficulty {
-  return (document.getElementById("difficulty") as HTMLSelectElement).value as Difficulty;
-}
+// Easy is still supported by the worker, but not offered for now.
+const TIER: Difficulty = "hard";
 
 type Punishment = "always" | "sometimes" | "never";
 
@@ -88,7 +91,7 @@ function startGame(i: number): void {
   colorOf = colorblind ? shuffledColors() : [0, 1, 2, 3, 4, 5, 6, 7, 8];
   const request: GenerateRequest = {
     kind: "generate", rows: ROWS, cols: COLS, mines: MINES, row: Math.floor(i / COLS), col: i % COLS,
-    tier: difficulty(), colorblind,
+    tier: TIER, colorblind,
   };
   runWorker("Generating board…", request, (result) => {
     board = result.board;
@@ -119,6 +122,9 @@ function lose(i: number, forced: boolean): void {
   gameOver = true;
   clickedMine = i;
   clickedMineForced = forced;
+  const { safe, mines } = classifyFrontier(board!, revealed, colorblindGame);
+  certainlySafe = new Set(safe);
+  certainMines = new Set(mines);
   render();
   document.getElementById("message")!.textContent = "Game over! You hit a mine.";
 }
@@ -138,7 +144,7 @@ function reveal(i: number): void {
     }
     // Never punished: move the mine elsewhere, keeping the rest no-guess.
     const request: RescueRequest = {
-      kind: "rescue", board, revealed, clicked: i, tier: difficulty(), colorblind: colorblindGame,
+      kind: "rescue", board, revealed, clicked: i, tier: TIER, colorblind: colorblindGame,
     };
     runWorker("", request, (result) => {
       adoptLayout(result.board, result.values!);
@@ -180,12 +186,15 @@ function updateCounter(): void {
 function render(): void {
   const container = document.getElementById("game")!;
   container.innerHTML = "";
+  // The 8 is walled in by mines, so it stays out of sight until it's the last
+  // safe cell left; clicking it wins.
+  const finalEight = board && !gameOver && safeCellsRemaining === 1 ? eightCell(board) : -1;
 
   for (let i = 0; i < ROWS * COLS; i++) {
     const mine = board !== null && board.mines[i] === 1;
     const showMine = mine && gameOver && adjacentToRevealed(i);
     const isRevealed = revealed[i] === 1 || showMine;
-    const visible = !board || isRevealed || adjacentToRevealed(i);
+    const visible = !board || isRevealed || adjacentToRevealed(i) || i === finalEight;
     const wasVisible = prevVisible[i];
     const div = document.createElement("div");
     div.className = "cell" + (isRevealed ? " revealed" : "");
@@ -199,8 +208,12 @@ function render(): void {
     if (showMine && clickedMine === -1) {
       div.textContent = "🌺";
     } else if (showMine) {
-      div.textContent = "💣";
-      div.classList.add(i !== clickedMine ? "mine" : clickedMineForced ? "mine-clicked" : "mine-unlucky");
+      const clicked = i === clickedMine;
+      div.textContent = clicked ? "💥" : "💣";
+      const forced = clicked ? clickedMineForced : certainMines.has(i);
+      div.classList.add(forced ? "mine-forced" : clicked ? "mine-unlucky" : "mine");
+    } else if (certainlySafe.has(i)) {
+      div.textContent = "👍";
     } else if (revealed[i] && board!.counts[i] > 0) {
       const circle = document.createElement("span");
       circle.className = `circle circle-${colorOf[board!.counts[i]]}`;
@@ -225,12 +238,13 @@ function newGame(): void {
   revealed = new Uint8Array(ROWS * COLS);
   gameOver = false;
   clickedMine = -1;
+  certainlySafe = new Set();
+  certainMines = new Set();
   safeCellsRemaining = 0;
   prevVisible = new Array(ROWS * COLS).fill(true);
   render();
 }
 
 document.getElementById("new-game")!.addEventListener("click", newGame);
-document.getElementById("difficulty")!.addEventListener("change", newGame);
 document.getElementById("randomize-colors")!.addEventListener("change", newGame);
 newGame();

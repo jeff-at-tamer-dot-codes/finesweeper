@@ -39,19 +39,57 @@ export function analyzeLoss(
   return { forced: !r.found, proven: r.proven, nodes: r.nodes, witness: r.layout };
 }
 
+// Splits the frontier into cells that are mines in no consistent layout (the
+// cells an Always-punished click would still leave safe) and cells that are
+// mines in every one (forced), as far as the budget can tell; the rest could
+// go either way. Every layout found rules out a value for all of its cells at
+// once, starting with the board itself, so most cells never need a search of
+// their own. A search that hits the budget counts as "no layout", matching
+// analyzeLoss and Always mode.
+export function classifyFrontier(
+  board: Board,
+  revealed: Uint8Array,
+  colorblind: boolean,
+  budget = 2_000_000,
+): { safe: number[]; mines: number[] } {
+  const { rows, cols, mines } = board;
+  const size = rows * cols;
+  const neighbors = neighborsFor(rows, cols);
+  const possibleMine = Uint8Array.from(mines);
+  const possibleSafe = mines.map((m) => 1 - m);
+  const safe: number[] = [];
+  const forced: number[] = [];
+  for (let i = 0; i < size; i++) {
+    if (revealed[i] || !neighbors[i].some((n) => revealed[n])) continue;
+    for (const mine of [true, false]) {
+      if (mine ? possibleMine[i] : possibleSafe[i]) continue;
+      const found = findLayout(board, revealed, i, mine, colorblind, { budget });
+      if (!found.found) (mine ? safe : forced).push(i);
+      else {
+        found.layout!.forEach((m, j) => {
+          possibleMine[j] |= m;
+          possibleSafe[j] |= 1 - m;
+        });
+      }
+    }
+  }
+  return { safe, mines: forced };
+}
+
 class BudgetExceeded extends Error {}
 
 // Finds a consistent layout in which frontier cell `cell` is a mine (or safe).
 // Without `random`, it tries each cell's current value first, so it returns a
 // layout close to the current board. With `random`, values are tried in random
 // order and leftover mines are scattered randomly away from the frontier.
+// `fixed` pins other unrevealed cells, frontier or not (1 = mine, 0 = safe).
 export function findLayout(
   board: Board,
   revealed: Uint8Array,
   cell: number,
   mine: boolean,
   colorblind: boolean,
-  { budget = 2_000_000, random }: { budget?: number; random?: () => number } = {},
+  { budget = 2_000_000, random, fixed }: { budget?: number; random?: () => number; fixed?: Map<number, number> } = {},
 ): LayoutSearch {
   const { rows, cols, mines, counts } = board;
   const size = rows * cols;
@@ -67,6 +105,14 @@ export function findLayout(
     if (revealed[i]) continue;
     if (neighbors[i].some((n) => revealed[n])) isFrontier[i] = 1;
     else interior++;
+  }
+  // Fixed interior cells take no part in the search, but their mines count
+  // toward the total and they can't absorb leftovers.
+  let fixedInteriorMines = 0;
+  for (const [i, v] of fixed ?? []) {
+    if (revealed[i] || isFrontier[i]) continue;
+    interior--;
+    fixedInteriorMines += v;
   }
 
   // One constraint per revealed number: its unrevealed neighbors hold exactly
@@ -113,6 +159,7 @@ export function findLayout(
   const nVars = order.length;
   const nCons = consCells.length;
   const consOfVar = order.map((cell) => consOfCell.get(cell) ?? []);
+  const fixedValue = order.map((cell) => fixed?.get(cell) ?? -1);
   const consMines = new Int32Array(nCons);
   const consFree = new Int32Array(nCons);
   for (let c = 0; c < nCons; c++) {
@@ -141,7 +188,8 @@ export function findLayout(
       consFree[c]--;
     }
     const pinned: number[] = [];
-    let ok = assignedMines <= totalMines && assignedMines + (nVars - d - 1) + interior >= totalMines;
+    const settled = assignedMines + fixedInteriorMines;
+    let ok = settled <= totalMines && settled + (nVars - d - 1) + interior >= totalMines;
     for (const c of consOfVar[d]) {
       if (!ok) break;
       const k = counts[consCells[c]];
@@ -191,6 +239,7 @@ export function findLayout(
     if (d === nVars) return true;
     const first = random ? +(random() < 0.5) : mines[order[d]];
     for (const v of d === 0 ? [+mine] : [first, 1 - first]) {
+      if (fixedValue[d] >= 0 && v !== fixedValue[d]) continue;
       const pinned = place(d, v);
       if (!pinned) continue;
       if (search(d + 1)) return true;
@@ -208,13 +257,17 @@ export function findLayout(
   const layout = new Uint8Array(size);
   order.forEach((c, d) => (layout[c] = assign[d]));
   const interiorCells: number[] = [];
-  for (let i = 0; i < size; i++) if (!revealed[i] && !isFrontier[i]) interiorCells.push(i);
+  for (let i = 0; i < size; i++) {
+    if (revealed[i] || isFrontier[i]) continue;
+    if (fixed?.has(i)) layout[i] = fixed.get(i)!;
+    else interiorCells.push(i);
+  }
   if (random) {
     for (let i = interiorCells.length - 1; i > 0; i--) {
       const j = Math.floor(random() * (i + 1));
       [interiorCells[i], interiorCells[j]] = [interiorCells[j], interiorCells[i]];
     }
   }
-  for (let q = 0; q < totalMines - assignedMines; q++) layout[interiorCells[q]] = 1;
+  for (let q = 0; q < totalMines - assignedMines - fixedInteriorMines; q++) layout[interiorCells[q]] = 1;
   return { found: true, proven: true, nodes, layout, values: colorValue };
 }

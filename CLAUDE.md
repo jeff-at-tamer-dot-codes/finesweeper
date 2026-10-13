@@ -25,7 +25,7 @@ node bench-consistency.ts [boards] [runsPerBoard] [mines]   # seed-dependence of
 - `generator-worker.ts` — Web Worker that runs the generate-and-test loop (and Never-mode rescues) off the main thread
 - `solver.ts` — board generator and no-guess solvers (shared by the game and the benchmark)
 - `lp.ts` — bounded-variable simplex used by the Hard solver (min/max of each variable over a linear system)
-- `loss-analysis.ts` — `findLayout`: searches for a mine layout consistent with what the player has seen, with a chosen cell forced mine or safe; `analyzeLoss` uses it to decide whether a clicked mine was forced
+- `loss-analysis.ts` — `findLayout`: searches for a mine layout consistent with what the player has seen, with a chosen cell forced mine or safe; `analyzeLoss` uses it to decide whether a clicked mine was forced, and `classifyFrontier` to find the frontier cells that were certainly safe or certainly mines, shown after a loss
 - `bench-solvable.ts` — Node benchmark: boards generated per solvable board vs mine density
 - `bench-consistency.ts` — Node benchmark: solves each seeded board several times with different solver seeds (`SolveOptions.random` shuffles every order-irrelevant choice) and counts boards whose verdict depends on the seed
 - `index.html` / `minesweeper.css` — page and styles
@@ -33,9 +33,13 @@ node bench-consistency.ts [boards] [runsPerBoard] [mines]   # seed-dependence of
 
 ## Current State
 
-Playable no-guess Minesweeper: 20 rows, 30 columns, 130 mines, with an Easy/Hard selector, a Randomize Colors checkbox, and a guess-punishment selector (defaults: Hard, colors randomized, always punished). The first click can be anywhere and the board is generated around it. Only cells adjacent to a revealed cell are shown. No flagging — win by revealing all non-mine cells. No timer. No image assets (text only). Solvers never use the global mine count.
+Playable no-guess Minesweeper: 20 rows, 30 columns, 130 mines, Hard tier only (the worker still supports Easy, but the UI no longer offers it, to avoid Easy's slow generation), with a Randomize Colors checkbox and a guess-punishment selector (defaults: colors randomized, always punished). Every board shows each number 1–7 at least once and exactly one 8 (`hasEveryNumber`, checked before any solver runs; Never-mode rescues require it too). The first click can be anywhere and the board is generated around it. Only cells adjacent to a revealed cell are shown. No flagging — win by revealing all non-mine cells.
 
-On a loss, the clicked mine is red if it was certainly a mine given what the player could see (revealed cells, colors only when colors are randomized, and the total mine count implied by the safe-cell counter) and green if some consistent layout had it safe. `analyzeLoss` finds this with a backtracking search over the frontier (clicked cell fixed safe, interior absorbs leftover mines); if it hits its node budget it reports "forced" (red) without proof.
+The 8 is built in: `generateBoardWithEight` walls a random cell in with 8 mines (off the edges, at least 3 cells from the first click so its wall misses the clear 3×3) and scatters the other mines around it. Being walled in, it can never be adjacent to a revealed cell, so it stays hidden and unclickable, and no deduction can reach it: the solvers don't count a safe 8 among the cells they must reveal. When the safe-cell counter reaches 1, the 8 is the only safe cell left; it pops into view and clicking it wins. Never-mode rescues build a new 8 on each try around a random cell the player can't see yet (`findLayout`'s `fixed` option pins its wall and center), since the clicked cell may be part of the old wall.
+
+The player can know these rules, but the solvers and the loss analysis deliberately don't use them as information (e.g. "no 7 seen yet, so one is still hidden", "no color means 8 until the end", "some hidden cell is walled in by 8 mines"). This keeps the solvers conservative; it means the loss analysis can occasionally call a cell a guess (green, no 👍) that the rules would have decided. No timer. No image assets (text only). Solvers never use the global mine count.
+
+On a loss, the clicked mine shows 💥 and is red if it was certainly a mine given what the player could see (revealed cells, colors only when colors are randomized, and the total mine count implied by the safe-cell counter) and green if some consistent layout had it safe. `analyzeLoss` finds this with a backtracking search over the frontier (clicked cell fixed safe, interior absorbs leftover mines); if it hits its node budget it reports "forced" (red) without proof. Every frontier cell that was certainly safe at that point (no consistent layout makes it a mine — exactly the cells an Always-punished click would leave safe) shows 👍, and every other frontier mine that was certainly a mine gets the same red background; the remaining frontier cells could have gone either way. `classifyFrontier` finds both with up to two `findLayout` calls per frontier cell (mine, then safe), skipping any value an earlier layout (starting with the board itself) already showed possible.
 
 Guess punishment (applies immediately, no new game):
 - **Sometimes** — the board is fixed; clicking a mine loses (red or green as above).
@@ -67,7 +71,7 @@ With the "Randomize Colors" checkbox, each new board shuffles which circle color
 Three difficulty levels orthogonal to grid size/mine density. Each tier guarantees the board requires that level of reasoning:
 
 1. **Easy** — solvable by simple constraint propagation alone
-2. **Hard** — simple propagation fails; linear-programming bounds succeed
+2. **Hard** — simple propagation fails; linear-programming bounds succeed (the only tier the UI offers)
 3. **Expert** (not implemented) — Hard solver fails; exhaustive enumeration succeeds
 
 To validate a board for tier N: run the tier N-1 solver (must fail) and the tier N solver (must succeed).

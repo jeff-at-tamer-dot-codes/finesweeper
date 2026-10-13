@@ -29,6 +29,26 @@ function shuffle<T>(items: T[], random: () => number): void {
   }
 }
 
+// Every board shows each number 1–7 at least once and exactly one 8. Cheap,
+// so the generator checks it before running any solver.
+export function hasEveryNumber({ mines, counts }: Board): boolean {
+  let seen = 0;
+  let eights = 0;
+  for (let i = 0; i < mines.length; i++) {
+    if (mines[i]) continue;
+    seen |= 1 << counts[i];
+    if (counts[i] === 8) eights++;
+  }
+  return (seen & 0b011111110) === 0b011111110 && eights === 1;
+}
+
+// The safe cell showing 8, if any. It is walled in by mines, so no deduction
+// can reach it: the solvers don't count it, and the game reveals it last.
+export function eightCell({ mines, counts }: Board): number {
+  for (let i = 0; i < mines.length; i++) if (!mines[i] && counts[i] === 8) return i;
+  return -1;
+}
+
 // Places mines uniformly at random, keeping the 3x3 around the first click clear.
 export function generateBoard(
   rows: number,
@@ -38,19 +58,64 @@ export function generateBoard(
   safeCol: number,
   random: () => number = Math.random,
 ): Board {
-  const size = rows * cols;
-  const candidates: number[] = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      if (Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1) continue;
-      candidates.push(r * cols + c);
+  return placeMines(rows, cols, mineCount, new Uint8Array(rows * cols), clearAround(rows, cols, safeRow, safeCol), random);
+}
+
+// Like generateBoard, but first builds an 8: a random cell walled in by 8
+// mines, off the edges and far enough from the first click (at least 3 cells
+// in each direction) that its wall stays out of the click's clear 3x3.
+export function generateBoardWithEight(
+  rows: number,
+  cols: number,
+  mineCount: number,
+  safeRow: number,
+  safeCol: number,
+  random: () => number = Math.random,
+): Board {
+  const centers: number[] = [];
+  for (let r = 1; r < rows - 1; r++) {
+    for (let c = 1; c < cols - 1; c++) {
+      if (Math.max(Math.abs(r - safeRow), Math.abs(c - safeCol)) >= 3) centers.push(r * cols + c);
     }
   }
-  if (mineCount > candidates.length) {
-    throw new Error(`cannot place ${mineCount} mines; only ${candidates.length} cells available`);
+  if (centers.length === 0) throw new Error("no room for an 8 away from the first click");
+  const center = centers[Math.floor(random() * centers.length)];
+  const preset = new Uint8Array(rows * cols);
+  for (const n of neighborsFor(rows, cols)[center]) preset[n] = 1;
+  const clear = clearAround(rows, cols, safeRow, safeCol);
+  clear[center] = 1;
+  return placeMines(rows, cols, mineCount, preset, clear, random);
+}
+
+function clearAround(rows: number, cols: number, row: number, col: number): Uint8Array {
+  const clear = new Uint8Array(rows * cols);
+  for (let r = Math.max(row - 1, 0); r <= Math.min(row + 1, rows - 1); r++) {
+    for (let c = Math.max(col - 1, 0); c <= Math.min(col + 1, cols - 1); c++) clear[r * cols + c] = 1;
+  }
+  return clear;
+}
+
+// Sets the preset mines, then scatters the rest uniformly over the cells that
+// are neither preset nor kept clear.
+function placeMines(
+  rows: number,
+  cols: number,
+  mineCount: number,
+  preset: Uint8Array,
+  clear: Uint8Array,
+  random: () => number,
+): Board {
+  const size = rows * cols;
+  const mines = Uint8Array.from(preset);
+  const candidates: number[] = [];
+  for (let i = 0; i < size; i++) {
+    if (!preset[i] && !clear[i]) candidates.push(i);
+    mineCount -= preset[i];
+  }
+  if (mineCount < 0 || mineCount > candidates.length) {
+    throw new Error(`cannot place ${mineCount} more mines in ${candidates.length} cells`);
   }
   // Partial Fisher-Yates: the first mineCount candidates become mines.
-  const mines = new Uint8Array(size);
   for (let i = 0; i < mineCount; i++) {
     const j = i + Math.floor(random() * (candidates.length - i));
     const tmp = candidates[i];
@@ -173,7 +238,9 @@ class Solver {
       this.dom[k] = k === 0 ? 1 : options.colorblind ? ALL_VALUES : 1 << k;
       this.colorCells.push([]);
     }
-    for (let i = 0; i < size; i++) if (!board.mines[i]) this.safeRemaining++;
+    // A safe 8 is walled in by mines, so it can't be reached by deduction; the
+    // game reveals it once everything else is solved.
+    for (let i = 0; i < size; i++) if (!board.mines[i] && board.counts[i] < 8) this.safeRemaining++;
     if (options.revealed) for (let i = 0; i < size; i++) if (options.revealed[i]) this.reveal(i);
     this.reveal(startRow * board.cols + startCol);
   }
@@ -425,7 +492,7 @@ class Solver {
 
 // Tier 1 (Easy): simple constraint propagation only, starting from a click at
 // (startRow, startCol). Never uses the global mine count.
-// Returns true if every safe cell gets revealed (the standard win rule).
+// Returns true if every safe cell but an 8 gets revealed.
 export function solveSimple(board: Board, startRow: number, startCol: number, options: SolveOptions = {}): boolean {
   const solver = new Solver(board, startRow, startCol, options);
   solver.propagate();
