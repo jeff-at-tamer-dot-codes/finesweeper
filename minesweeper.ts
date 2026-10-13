@@ -1,224 +1,166 @@
-const ROWS = 16;
+import type { Difficulty, GenerateRequest, GenerateResult, RescueRequest } from "./generator-worker.ts";
+import { analyzeLoss, findLayout } from "./loss-analysis.ts";
+import { type Board, boardFromMines } from "./solver.ts";
+
+const ROWS = 20;
 const COLS = 30;
-const MINES = 99;
+const MINES = 130;
 
-interface Cell {
-  mine: boolean;
-  revealed: boolean;
-  neighborCount: number;
-}
-
-let board: Cell[][] = [];
+let board: Board | null = null;
+let revealed = new Uint8Array(ROWS * COLS);
 let gameOver = false;
-let firstClick = true;
-let clickedMineRow = -1;
-let clickedMineCol = -1;
+let generator: Worker | null = null;
+let clickedMine = -1;
+// Whether the clicked mine was certain given what the player could see.
+let clickedMineForced = false;
+let colorblindGame = false;
 let safeCellsRemaining = 0;
-let prevVisible: boolean[][] = [];
+let prevVisible: boolean[] = [];
+// colorOf[n] is the circle color shown for count n.
+let colorOf = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
-function createBoard(): void {
-  gameOver = false;
-  firstClick = true;
-  clickedMineRow = -1;
-  clickedMineCol = -1;
-  board = [];
-  prevVisible = [];
-  for (let r = 0; r < ROWS; r++) {
-    const row: Cell[] = [];
-    for (let c = 0; c < COLS; c++) {
-      row.push({ mine: false, revealed: false, neighborCount: 0 });
+function difficulty(): Difficulty {
+  return (document.getElementById("difficulty") as HTMLSelectElement).value as Difficulty;
+}
+
+type Punishment = "always" | "sometimes" | "never";
+
+function punishment(): Punishment {
+  return (document.getElementById("punish") as HTMLSelectElement).value as Punishment;
+}
+
+function randomizeColors(): boolean {
+  return (document.getElementById("randomize-colors") as HTMLInputElement).checked;
+}
+
+function shuffledColors(): number[] {
+  const colors = [1, 2, 3, 4, 5, 6, 7, 8];
+  for (let i = colors.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [colors[i], colors[j]] = [colors[j], colors[i]];
+  }
+  return [0, ...colors];
+}
+
+function neighbors(i: number): number[] {
+  const r = Math.floor(i / COLS);
+  const c = i % COLS;
+  const result: number[] = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (dr === 0 && dc === 0) continue;
+      const nr = r + dr;
+      const nc = c + dc;
+      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) result.push(nr * COLS + nc);
     }
-    board.push(row);
-    prevVisible.push(new Array(COLS).fill(true));
+  }
+  return result;
+}
+
+function revealCell(start: number): void {
+  const stack = [start];
+  while (stack.length > 0) {
+    const i = stack.pop()!;
+    if (revealed[i] || board!.mines[i]) continue;
+    revealed[i] = 1;
+    safeCellsRemaining--;
+    if (board!.counts[i] === 0) stack.push(...neighbors(i));
   }
 }
 
-function fixEdgeFiftyFifties(): void {
-  function fixRow(thirdRow: number, edgeRow1: number, edgeRow2: number): void {
-    for (let c = 0; c < COLS; c++) {
-      if (!board[thirdRow][c].mine) continue;
-      const isLeft = c === 0;
-      const isRight = c === COLS - 1;
-      if (isLeft) {
-        if (!board[thirdRow][1].mine) continue;
-      } else if (isRight) {
-        if (!board[thirdRow][COLS - 2].mine) continue;
-      } else {
-        if (!board[thirdRow][c - 1].mine || !board[thirdRow][c + 1].mine) continue;
-      }
-      const e1 = board[edgeRow1][c].mine;
-      const e2 = board[edgeRow2][c].mine;
-      if (e1 === e2) continue;
-      const targetRow = e1 ? edgeRow2 : edgeRow1;
-      board[thirdRow][c].mine = false;
-      board[targetRow][c].mine = true;
-    }
-  }
-
-  function fixCol(thirdCol: number, edgeCol1: number, edgeCol2: number): void {
-    for (let r = 0; r < ROWS; r++) {
-      if (!board[r][thirdCol].mine) continue;
-      const isTop = r === 0;
-      const isBottom = r === ROWS - 1;
-      if (isTop) {
-        if (!board[1][thirdCol].mine) continue;
-      } else if (isBottom) {
-        if (!board[ROWS - 2][thirdCol].mine) continue;
-      } else {
-        if (!board[r - 1][thirdCol].mine || !board[r + 1][thirdCol].mine) continue;
-      }
-      const e1 = board[r][edgeCol1].mine;
-      const e2 = board[r][edgeCol2].mine;
-      if (e1 === e2) continue;
-      const targetCol = e1 ? edgeCol2 : edgeCol1;
-      board[r][thirdCol].mine = false;
-      board[r][targetCol].mine = true;
-    }
-  }
-
-  function fixRowDiag(thirdRow: number, outerRow: number, innerRow: number): void {
-    for (let c = 0; c <= COLS - 4; c++) {
-      if (!board[thirdRow][c].mine || !board[thirdRow][c + 3].mine) continue;
-      const group: [number, number][] = [
-        [outerRow, c + 1], [outerRow, c + 2],
-        [innerRow, c + 1], [innerRow, c + 2]
-      ];
-      const mines = group.filter(([r, cc]) => board[r][cc].mine);
-      if (mines.length !== 2) continue;
-      if (mines[0][0] === mines[1][0] || mines[0][1] === mines[1][1]) continue;
-      board[thirdRow][c].mine = false;
-      board[thirdRow][c + 3].mine = false;
-      for (const [r, cc] of group) board[r][cc].mine = true;
-    }
-
-    if (board[thirdRow][2].mine) {
-      const group: [number, number][] = [
-        [outerRow, 0], [outerRow, 1],
-        [innerRow, 0], [innerRow, 1]
-      ];
-      const mines = group.filter(([r, c]) => board[r][c].mine);
-      if (mines.length === 2 && mines[0][0] !== mines[1][0] && mines[0][1] !== mines[1][1]) {
-        board[outerRow][0].mine = true;
-        board[outerRow][1].mine = true;
-        board[innerRow][0].mine = true;
-        board[innerRow][1].mine = false;
-        board[thirdRow][2].mine = false;
-      }
-    }
-
-    if (board[thirdRow][COLS - 3].mine) {
-      const group: [number, number][] = [
-        [outerRow, COLS - 2], [outerRow, COLS - 1],
-        [innerRow, COLS - 2], [innerRow, COLS - 1]
-      ];
-      const mines = group.filter(([r, c]) => board[r][c].mine);
-      if (mines.length === 2 && mines[0][0] !== mines[1][0] && mines[0][1] !== mines[1][1]) {
-        board[outerRow][COLS - 1].mine = true;
-        board[outerRow][COLS - 2].mine = true;
-        board[innerRow][COLS - 1].mine = true;
-        board[innerRow][COLS - 2].mine = false;
-        board[thirdRow][COLS - 3].mine = false;
-      }
-    }
-  }
-
-  function fixColDiag(thirdCol: number, outerCol: number, innerCol: number): void {
-    for (let r = 0; r <= ROWS - 4; r++) {
-      if (!board[r][thirdCol].mine || !board[r + 3][thirdCol].mine) continue;
-      const group: [number, number][] = [
-        [r + 1, outerCol], [r + 1, innerCol],
-        [r + 2, outerCol], [r + 2, innerCol]
-      ];
-      const mines = group.filter(([rr, c]) => board[rr][c].mine);
-      if (mines.length !== 2) continue;
-      if (mines[0][0] === mines[1][0] || mines[0][1] === mines[1][1]) continue;
-      board[r][thirdCol].mine = false;
-      board[r + 3][thirdCol].mine = false;
-      for (const [rr, c] of group) board[rr][c].mine = true;
-    }
-  }
-
-  fixRow(2, 0, 1);
-  fixRow(ROWS - 3, ROWS - 2, ROWS - 1);
-  fixCol(2, 0, 1);
-  fixCol(COLS - 3, COLS - 2, COLS - 1);
-
-  fixRowDiag(2, 0, 1);
-  fixRowDiag(ROWS - 3, ROWS - 1, ROWS - 2);
-  fixColDiag(2, 0, 1);
-  fixColDiag(COLS - 3, COLS - 1, COLS - 2);
+// Runs one job on a fresh background worker; clicks are ignored until it answers.
+function runWorker(message: string, request: GenerateRequest | RescueRequest, done: (result: GenerateResult) => void): void {
+  document.getElementById("message")!.textContent = message;
+  const worker = new Worker(new URL("./generator-worker.js", import.meta.url), { type: "module" });
+  generator = worker;
+  worker.addEventListener("message", (event: MessageEvent<GenerateResult>) => {
+    worker.terminate();
+    generator = null;
+    document.getElementById("message")!.textContent = "";
+    done(event.data);
+  });
+  worker.postMessage(request);
 }
 
-function placeMines(safeRow: number, safeCol: number): void {
-  let placed = 0;
-  while (placed < MINES) {
-    const r = Math.floor(Math.random() * ROWS);
-    const c = Math.floor(Math.random() * COLS);
-    if (Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1) continue;
-    if (board[r][c].mine) continue;
-    board[r][c].mine = true;
-    placed++;
-  }
-  fixEdgeFiftyFifties();
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (board[r][c].mine) continue;
-      let count = 0;
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          const nr = r + dr;
-          const nc = c + dc;
-          if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc].mine) {
-            count++;
-          }
-        }
-      }
-      board[r][c].neighborCount = count;
-    }
-  }
-  safeCellsRemaining = ROWS * COLS - MINES;
+function startGame(i: number): void {
+  const colorblind = randomizeColors();
+  colorblindGame = colorblind;
+  colorOf = colorblind ? shuffledColors() : [0, 1, 2, 3, 4, 5, 6, 7, 8];
+  const request: GenerateRequest = {
+    kind: "generate", rows: ROWS, cols: COLS, mines: MINES, row: Math.floor(i / COLS), col: i % COLS,
+    tier: difficulty(), colorblind,
+  };
+  runWorker("Generating board…", request, (result) => {
+    board = result.board;
+    safeCellsRemaining = ROWS * COLS - MINES;
+    reveal(i);
+  });
 }
 
-function revealCell(row: number, col: number): void {
-  const cell = board[row][col];
-  if (cell.revealed || cell.mine) return;
-  cell.revealed = true;
-  safeCellsRemaining--;
-  if (cell.neighborCount === 0) {
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        const nr = row + dr;
-        const nc = col + dc;
-        if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
-          revealCell(nr, nc);
-        }
-      }
-    }
+// Switches to a different layout that agrees with everything the player has
+// seen. values[k] is the number now shown by cells currently labeled k; the
+// circle colors are remapped so every revealed cell keeps its color.
+function adoptLayout(next: Board, values: Int32Array): void {
+  const nextColorOf = [0, -1, -1, -1, -1, -1, -1, -1, -1];
+  const usedColors = new Set<number>();
+  for (let i = 0; i < ROWS * COLS; i++) {
+    const k = board!.counts[i];
+    if (!revealed[i] || k === 0) continue;
+    nextColorOf[values[k]] = colorOf[k];
+    usedColors.add(colorOf[k]);
   }
+  const spare = shuffledColors().filter((color) => color > 0 && !usedColors.has(color));
+  for (let n = 1; n <= 8; n++) if (nextColorOf[n] < 0) nextColorOf[n] = spare.pop()!;
+  colorOf = nextColorOf;
+  board = next;
 }
 
-function reveal(row: number, col: number): void {
-  if (gameOver) return;
-  const cell = board[row][col];
-  if (cell.revealed) return;
+function lose(i: number, forced: boolean): void {
+  gameOver = true;
+  clickedMine = i;
+  clickedMineForced = forced;
+  render();
+  document.getElementById("message")!.textContent = "Game over! You hit a mine.";
+}
 
-  if (firstClick) {
-    firstClick = false;
-    placeMines(row, col);
-  }
-
-  revealCell(row, col);
-
-  if (cell.mine) {
-    gameOver = true;
-    clickedMineRow = row;
-    clickedMineCol = col;
-    render();
-    document.getElementById("message")!.textContent = "Game over! You hit a mine.";
+function reveal(i: number): void {
+  if (gameOver || generator || revealed[i]) return;
+  if (!board) {
+    startGame(i);
     return;
   }
 
-  if (checkWin()) {
+  if (board.mines[i]) {
+    const forced = analyzeLoss(board, revealed, i, colorblindGame).forced;
+    if (forced || punishment() !== "never") {
+      lose(i, forced);
+      return;
+    }
+    // Never punished: move the mine elsewhere, keeping the rest no-guess.
+    const request: RescueRequest = {
+      kind: "rescue", board, revealed, clicked: i, tier: difficulty(), colorblind: colorblindGame,
+    };
+    runWorker("", request, (result) => {
+      adoptLayout(result.board, result.values!);
+      reveal(i);
+    });
+    return;
+  }
+
+  if (punishment() === "always" && adjacentToRevealed(i)) {
+    // Always punished: if this cell could have been a mine, it is one.
+    const found = findLayout(board, revealed, i, true, colorblindGame);
+    if (found.found) {
+      adoptLayout(boardFromMines(ROWS, COLS, found.layout!), found.values!);
+      lose(i, false);
+      return;
+    }
+  }
+
+  revealCell(i);
+
+  if (safeCellsRemaining === 0) {
+    gameOver = true;
     render();
     document.getElementById("message")!.textContent = "You win!";
     return;
@@ -227,88 +169,68 @@ function reveal(row: number, col: number): void {
   render();
 }
 
-function checkWin(): boolean {
-  if (safeCellsRemaining === 0) {
-    gameOver = true;
-    return true;
-  }
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (!board[r][c].revealed && !board[r][c].mine && adjacentToRevealed(r, c)) {
-        return false;
-      }
-    }
-  }
-  gameOver = true;
-  return true;
-}
-
-function adjacentToRevealed(row: number, col: number): boolean {
-  for (let dr = -1; dr <= 1; dr++) {
-    for (let dc = -1; dc <= 1; dc++) {
-      const nr = row + dr;
-      const nc = col + dc;
-      if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS && board[nr][nc].revealed) {
-        return true;
-      }
-    }
-  }
-  return false;
+function adjacentToRevealed(i: number): boolean {
+  return neighbors(i).some((n) => revealed[n]);
 }
 
 function updateCounter(): void {
-  const counter = document.getElementById("counter")!;
-  if (firstClick) {
-    counter.textContent = "";
-  } else {
-    counter.textContent = String(safeCellsRemaining);
-  }
+  document.getElementById("counter")!.textContent = board ? String(safeCellsRemaining) : "";
 }
 
 function render(): void {
   const container = document.getElementById("game")!;
   container.innerHTML = "";
 
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const cell = board[r][c];
-      const showMine = cell.mine && gameOver && adjacentToRevealed(r, c);
-      const isRevealed = cell.revealed || showMine;
-      const visible = firstClick || isRevealed || adjacentToRevealed(r, c);
-      const wasVisible = prevVisible[r][c];
-      const div = document.createElement("div");
-      div.className = "cell" + (isRevealed ? " revealed" : "");
-      if (!visible) {
-        div.classList.add(wasVisible ? "pop-out" : "hidden");
-      } else if (!wasVisible) {
-        div.classList.add("pop-in");
-      }
-      prevVisible[r][c] = visible;
-
-      if (showMine) {
-        div.textContent = clickedMineRow === -1 ? "🌺" : "💣";
-        div.classList.add(r === clickedMineRow && c === clickedMineCol ? "mine-clicked" : "mine");
-      } else if (cell.revealed && cell.neighborCount > 0) {
-        const circle = document.createElement("span");
-        circle.className = `circle circle-${cell.neighborCount}`;
-        div.appendChild(circle);
-      }
-
-      if (!gameOver && !isRevealed && visible) {
-        const row = r, col = c;
-        div.addEventListener("click", () => reveal(row, col));
-      }
-
-      container.appendChild(div);
+  for (let i = 0; i < ROWS * COLS; i++) {
+    const mine = board !== null && board.mines[i] === 1;
+    const showMine = mine && gameOver && adjacentToRevealed(i);
+    const isRevealed = revealed[i] === 1 || showMine;
+    const visible = !board || isRevealed || adjacentToRevealed(i);
+    const wasVisible = prevVisible[i];
+    const div = document.createElement("div");
+    div.className = "cell" + (isRevealed ? " revealed" : "");
+    if (!visible) {
+      div.classList.add(wasVisible ? "pop-out" : "hidden");
+    } else if (!wasVisible) {
+      div.classList.add("pop-in");
     }
+    prevVisible[i] = visible;
+
+    if (showMine && clickedMine === -1) {
+      div.textContent = "🌺";
+    } else if (showMine) {
+      div.textContent = "💣";
+      div.classList.add(i !== clickedMine ? "mine" : clickedMineForced ? "mine-clicked" : "mine-unlucky");
+    } else if (revealed[i] && board!.counts[i] > 0) {
+      const circle = document.createElement("span");
+      circle.className = `circle circle-${colorOf[board!.counts[i]]}`;
+      div.appendChild(circle);
+    }
+
+    if (!gameOver && !isRevealed && visible) {
+      div.addEventListener("click", () => reveal(i));
+    }
+
+    container.appendChild(div);
   }
   updateCounter();
 }
 
 function newGame(): void {
+  // Starting over mid-generation abandons that board.
+  generator?.terminate();
+  generator = null;
   document.getElementById("message")!.textContent = "";
-  createBoard();
+  board = null;
+  revealed = new Uint8Array(ROWS * COLS);
+  gameOver = false;
+  clickedMine = -1;
+  safeCellsRemaining = 0;
+  prevVisible = new Array(ROWS * COLS).fill(true);
   render();
 }
 
+document.getElementById("new-game")!.addEventListener("click", newGame);
+document.getElementById("difficulty")!.addEventListener("change", newGame);
+document.getElementById("randomize-colors")!.addEventListener("change", newGame);
 newGame();

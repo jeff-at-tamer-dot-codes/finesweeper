@@ -7,13 +7,23 @@
 </head>
 <body>
   <div id="controls">
-    <button onclick="newGame()">New Game</button>
+    <select id="difficulty" aria-label="Difficulty">
+      <option value="easy">Easy</option>
+      <option value="hard" selected>Hard</option>
+    </select>
+    <label for="randomize-colors"><input type="checkbox" id="randomize-colors" checked> Randomize Colors</label>
+    <select id="punish" aria-label="Guess punishment">
+      <option value="always" selected>Guesses are always punished</option>
+      <option value="sometimes">Guesses are sometimes punished</option>
+      <option value="never">Guesses are never punished</option>
+    </select>
+    <button id="new-game">New Game</button>
     <span id="message"></span>
   </div>
   <div id="board-wrapper">
     <span id="counter"></span>
     <div id="game"></div>
   </div>
-  <script src="minesweeper.js"></script>
+  <script type="module" src="minesweeper.js"></script>
 </body>
 </html>
