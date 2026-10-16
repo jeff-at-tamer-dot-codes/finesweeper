@@ -21,6 +21,22 @@
   pointer-events: none;
 }
 
+.flower {
+  display: inline-block;
+  /* Keep each flower on its own compositor layer for good: otherwise it's
+     promoted only while animating, and the layer's pixel snapping differs
+     from normal painting, so some columns shift by a pixel for the swap. */
+  will-change: transform;
+}
+
+.flower.flower-out {
+  animation: pop-out var(--reveal-duration) ease-in var(--sweep-delay) forwards;
+}
+
+.flower.flower-in {
+  animation: pop-in var(--reveal-duration) ease-out;
+}
+
 body {
   margin: 26px;
   font-family: sans-serif;

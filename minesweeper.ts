@@ -23,6 +23,14 @@ let prevVisible: boolean[] = [];
 // colorOf[n] is the circle color shown for count n.
 let colorOf = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
+// After a win every mine shows the same flower, which changes every few
+// seconds in a diagonal sweep from the top-left corner.
+const FLOWERS = ["🌺", "🌹", "🌸", "💐", "🌷", "🌻", "🌼", "🪻"];
+const FLOWER_SWAP_MS = 4000;
+const FLOWER_SWEEP_STEP_MS = 20; // delay per diagonal
+let flower = "";
+let flowerTimer: number | undefined;
+
 // Easy is still supported by the worker, but not offered for now.
 const TIER: Difficulty = "hard";
 
@@ -167,12 +175,35 @@ function reveal(i: number): void {
 
   if (safeCellsRemaining === 0) {
     gameOver = true;
+    flower = randomFlower();
+    flowerTimer = setInterval(swapFlowers, FLOWER_SWAP_MS);
     render();
     document.getElementById("message")!.textContent = "You win!";
     return;
   }
 
   render();
+}
+
+function randomFlower(): string {
+  const others = FLOWERS.filter((f) => f !== flower);
+  return others[Math.floor(Math.random() * others.length)];
+}
+
+function swapFlowers(): void {
+  const next = randomFlower();
+  flower = next;
+  document.querySelectorAll<HTMLElement>(".flower").forEach((span) => {
+    span.classList.add("flower-out");
+    span.onanimationend = () => {
+      if (span.classList.contains("flower-out")) {
+        span.textContent = next;
+        span.classList.replace("flower-out", "flower-in");
+      } else {
+        span.classList.remove("flower-in");
+      }
+    };
+  });
 }
 
 function adjacentToRevealed(i: number): boolean {
@@ -206,7 +237,12 @@ function render(): void {
     prevVisible[i] = visible;
 
     if (showMine && clickedMine === -1) {
-      div.textContent = "🌺";
+      const span = document.createElement("span");
+      span.className = "flower";
+      span.textContent = flower;
+      const diagonal = Math.floor(i / COLS) + (i % COLS);
+      span.style.setProperty("--sweep-delay", `${diagonal * FLOWER_SWEEP_STEP_MS}ms`);
+      div.appendChild(span);
     } else if (showMine) {
       const clicked = i === clickedMine;
       div.textContent = clicked ? "💥" : "💣";
@@ -233,6 +269,7 @@ function newGame(): void {
   // Starting over mid-generation abandons that board.
   generator?.terminate();
   generator = null;
+  clearInterval(flowerTimer);
   document.getElementById("message")!.textContent = "";
   board = null;
   revealed = new Uint8Array(ROWS * COLS);
